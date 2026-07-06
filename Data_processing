@@ -13,7 +13,7 @@ matplotlib.use("Agg")
 plt.rcParams['font.family'] = 'Times New Roman'
 
 # Path to the folder containing audio files
-folder_path = 'D:\博士学习\杂七杂八\wav - 副本\wav - 副本'
+folder_path = 'D:\noise_data\wav'
 time_frequency = []  # Store time-domain segments for each sample
 
 # Iterate over all audio files in the folder
