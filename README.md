@@ -1,0 +1,12 @@
+python=3.8.7
+h5py==3.1.0
+numpy==1.22.0
+numba==0.58.1
+pandas==2.0.3
+scikit-learn==1.3.2
+tensorboard==2.14.0
+tensorflow-gpu==2.5.0
+matplotlib==3.6.3
+cleanlab==2.7.1
+pillow==10.4.0
+tqdm==4.64.1
