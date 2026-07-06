@@ -1,6 +1,6 @@
 import os
-os.environ["CUDA_VISIBLE_DEVICES"]="0"
-os.environ["TF_CPP_MIN_LOG_LEVEL"]='2' # 忽略 warning 和 Error
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = '2'  # Ignore warnings and errors
 import numpy as np
 import pandas as pd
 import tensorflow as tf
@@ -15,57 +15,56 @@ from sklearn.metrics import confusion_matrix, accuracy_score
 import matplotlib.ticker as ticker
 import librosa.display
 
-# 在导入matplotlib后立即设置全局字体
-# 设置全局字体为Times New Roman
+# Set global font to Times New Roman immediately after importing matplotlib
 plt.rcParams['font.family'] = 'serif'
 plt.rcParams['font.serif'] = ['Times New Roman']
 
-# 设置全局字体大小和粗细
-plt.rcParams['font.size'] = 14  # 默认字体大小
-plt.rcParams['font.weight'] = 'bold'  # 粗体
+# Set global font size and weight
+plt.rcParams['font.size'] = 14          # Default font size
+plt.rcParams['font.weight'] = 'bold'    # Bold
 
-# 设置标题字体
-plt.rcParams['axes.titlesize'] = 18  # 坐标轴标题大小
-plt.rcParams['axes.titleweight'] = 'bold'  # 坐标轴标题粗体
-plt.rcParams['figure.titlesize'] = 18  # 图表标题大小
-plt.rcParams['figure.titleweight'] = 'bold'  # 图表标题粗体
+# Set title fonts
+plt.rcParams['axes.titlesize'] = 18
+plt.rcParams['axes.titleweight'] = 'bold'
+plt.rcParams['figure.titlesize'] = 18
+plt.rcParams['figure.titleweight'] = 'bold'
 
-# 设置坐标轴标签
-plt.rcParams['axes.labelsize'] = 16  # 坐标轴标签大小
-plt.rcParams['axes.labelweight'] = 'bold'  # 坐标轴标签粗体
+# Set axis labels
+plt.rcParams['axes.labelsize'] = 16
+plt.rcParams['axes.labelweight'] = 'bold'
 
-# 设置刻度标签
-plt.rcParams['xtick.labelsize'] = 16  # x轴刻度标签大小
-plt.rcParams['ytick.labelsize'] = 16  # y轴刻度标签大小
-plt.rcParams['xtick.major.pad'] = 8  # x轴刻度与标签的间距
-plt.rcParams['ytick.major.pad'] = 8  # y轴刻度与标签的间距
+# Set tick labels
+plt.rcParams['xtick.labelsize'] = 16
+plt.rcParams['ytick.labelsize'] = 16
+plt.rcParams['xtick.major.pad'] = 8
+plt.rcParams['ytick.major.pad'] = 8
 
-# 设置图例
+# Set legend
 plt.rcParams['legend.fontsize'] = 10
 plt.rcParams['legend.title_fontsize'] = 10
 plt.rcParams['legend.frameon'] = True
 plt.rcParams['legend.framealpha'] = 0.5
 plt.rcParams['legend.edgecolor'] = 'black'
 
-# 1. 增强型数据加载与预处理
+# 1. Enhanced data loading and preprocessing
 def load_and_preprocess_data(DATA_PATH):
     """
-    加载图像数据和标签，并进行预处理
+    Load image data and labels, and perform preprocessing.
     """
     data = pd.read_csv(DATA_PATH)
     X = np.array(data.iloc[:, :-1])
     y = np.array(data.iloc[:, -1]).astype(np.int32)
 
-    # 数据标准化
+    # Standardize data
     X = (X - np.mean(X)) / np.std(X)
 
-    # 恢复原始的形状
+    # Reshape to original shape
     X = X.reshape(data.shape[0], 65, 65, 1)
     return X, y
 
-# 2. 构建CNN模型（带Dropout用于不确定性估计）
+# 2. Build CNN model (with Dropout for uncertainty estimation)
 def create_cnn_model(input_shape=(65, 65, 1), num_classes=2):
-    """创建适用于65x65图像的CNN模型，带不确定性估计"""
+    """Create a CNN model suitable for 65x65 images with uncertainty estimation."""
     model = models.Sequential([
         layers.Conv2D(16, (3, 3), activation='relu', strides=(2, 2), input_shape=input_shape),
         layers.BatchNormalization(),
@@ -86,18 +85,17 @@ def create_cnn_model(input_shape=(65, 65, 1), num_classes=2):
                   metrics=['accuracy'])
     return model
 
-
-# 3. 增强型交叉验证预测（返回置信度）
+# 3. Enhanced cross-validation prediction (returns confidence scores)
 def cross_validation_predict(X, y, n_folds=5, epochs=200, batch_size=64):
-    """执行K折交叉验证获取预测概率和置信度 - 改进版"""
+    """Perform K-fold cross-validation to obtain prediction probabilities and confidence scores - improved version."""
     num_classes = len(np.unique(y))
     pred_probs = np.zeros((len(X), num_classes))
     confidence_scores = np.zeros(len(X))
     fold_models = []
 
-    # 存储每个fold的训练历史
+    # Store training history for each fold
     fold_histories = []
-    # 存储每个fold的性能指标
+    # Store performance metrics for each fold
     fold_metrics = {
         'train_loss': [],
         'val_loss': [],
@@ -107,52 +105,51 @@ def cross_validation_predict(X, y, n_folds=5, epochs=200, batch_size=64):
         'specificity': []
     }
 
-    # 使用分层K折保持类别分布 - 关键改进点1
+    # Use stratified K-fold to preserve class distribution - key improvement 1
     skf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=40)
 
-    # 添加进度条详细描述
     fold_iterator = skf.split(X, y)
     for fold, (train_idx, val_idx) in tqdm(
-            enumerate(fold_iterator), total=n_folds, desc="交叉验证"
+            enumerate(fold_iterator), total=n_folds, desc="Cross-validation"
     ):
         X_train, y_train = X[train_idx], y[train_idx]
         X_val, y_val = X[val_idx], y[val_idx]
 
-        # 创建并训练模型
+        # Create and train model
         model = create_cnn_model()
 
-        # 添加回调函数记录历史
+        # Add callback to record history
         csv_logger = tf.keras.callbacks.CSVLogger(
             f'fold_{fold + 1}_training_log.csv', separator=',', append=False)
 
         history = model.fit(X_train, y_train,
-                  epochs=epochs,
-                  validation_split=0.1,
-                  batch_size=batch_size,
-                  callbacks=[csv_logger],
-                  verbose=0)
+                            epochs=epochs,
+                            validation_split=0.1,
+                            batch_size=batch_size,
+                            callbacks=[csv_logger],
+                            verbose=0)
 
-        # 记录训练历史
+        # Record training history
         fold_histories.append(history.history)
 
-        # 获取验证集的预测概率
+        # Get prediction probabilities for validation set
         fold_probs = model.predict(X_val, verbose=0)
         pred_probs[val_idx] = fold_probs
 
-        # 计算验证集样本的置信度 (预测概率的最大值)
+        # Calculate confidence for validation samples (max probability)
         confidence_scores[val_idx] = np.max(fold_probs, axis=1)
         fold_models.append(model)
 
-        # 计算性能指标
+        # Compute performance metrics
         y_pred = np.argmax(fold_probs, axis=1)
         cm = confusion_matrix(y_val, y_pred)
 
-        # 敏感度（召回率）和特异度
+        # Sensitivity (recall) and specificity
         tn, fp, fn, tp = cm.ravel()
         sensitivity = tp / (tp + fn) if (tp + fn) > 0 else 0
         specificity = tn / (tn + fp) if (tn + fp) > 0 else 0
 
-        # 记录指标
+        # Record metrics
         fold_metrics['train_loss'].append(history.history['loss'][-1])
         fold_metrics['val_loss'].append(history.history['val_loss'][-1])
         fold_metrics['train_acc'].append(history.history['accuracy'][-1])
@@ -160,37 +157,35 @@ def cross_validation_predict(X, y, n_folds=5, epochs=200, batch_size=64):
         fold_metrics['sensitivity'].append(sensitivity)
         fold_metrics['specificity'].append(specificity)
 
-    # 可视化所有fold的训练过程
+    # Visualize training curves for all folds
     visualize_training_curves(fold_histories, n_folds, 'training_curves.png')
 
-    # 可视化所有fold的性能指标
+    # Visualize performance metrics for all folds
     visualize_fold_metrics(fold_metrics, 'fold_metrics.png')
 
     return pred_probs, confidence_scores, fold_models, fold_histories, fold_metrics
 
-
 def visualize_training_curves(histories, n_folds, output_path):
-    """可视化所有fold的训练和验证曲线"""
+    """Visualize training and validation curves for all folds."""
     plt.figure(figsize=(15, 10))
 
-    # 创建子图
     fig, axs = plt.subplots(2, 2, figsize=(18, 12))
 
-    # 1. 训练损失曲线
+    # 1. Training loss curves
     for i, history in enumerate(histories):
         axs[0, 0].plot(history['loss'], label=f'Fold {i + 1}')
     axs[0, 0].set_title('Training loss')
     axs[0, 0].set_ylabel('Loss')
     axs[0, 0].legend()
 
-    # 2. 验证损失曲线
+    # 2. Validation loss curves
     for i, history in enumerate(histories):
         axs[0, 1].plot(history['val_loss'], label=f'Fold {i + 1}')
     axs[0, 1].set_title('Validation loss')
     axs[0, 1].set_ylabel('Loss')
     axs[0, 1].legend()
 
-    # 3. 训练准确率曲线
+    # 3. Training accuracy curves
     for i, history in enumerate(histories):
         axs[1, 0].plot(history['accuracy'], label=f'Fold {i + 1}')
     axs[1, 0].set_title('Training accuracy')
@@ -198,7 +193,7 @@ def visualize_training_curves(histories, n_folds, output_path):
     axs[1, 0].set_xlabel('Epoch')
     axs[1, 0].legend()
 
-    # 4. 验证准确率曲线
+    # 4. Validation accuracy curves
     for i, history in enumerate(histories):
         axs[1, 1].plot(history['val_accuracy'], label=f'Fold {i + 1}')
     axs[1, 1].set_title('Validation accuracy')
@@ -210,15 +205,13 @@ def visualize_training_curves(histories, n_folds, output_path):
     plt.savefig(output_path, dpi=300)
     plt.close()
 
-
 def visualize_fold_metrics(metrics, output_path):
-    """可视化所有fold的性能指标"""
+    """Visualize performance metrics for all folds."""
     plt.figure(figsize=(15, 10))
 
-    # 创建子图
     fig, axs = plt.subplots(2, 2, figsize=(18, 12))
 
-    # 1. 训练和验证损失
+    # 1. Training and validation loss
     folds = range(1, len(metrics['train_loss']) + 1)
     axs[0, 0].bar(folds, metrics['train_loss'], alpha=0.7, label='Training loss')
     axs[0, 0].bar(folds, metrics['val_loss'], alpha=0.7, label='Validation loss')
@@ -227,7 +220,7 @@ def visualize_fold_metrics(metrics, output_path):
     axs[0, 0].set_xlabel('Fold')
     axs[0, 0].legend()
 
-    # 2. 训练和验证准确率
+    # 2. Training and validation accuracy
     axs[0, 1].bar(folds, metrics['train_acc'], alpha=0.7, label='Training accuracy')
     axs[0, 1].bar(folds, metrics['val_acc'], alpha=0.7, label='Validation accuracy')
     axs[0, 1].set_title('Final accuracy')
@@ -235,7 +228,7 @@ def visualize_fold_metrics(metrics, output_path):
     axs[0, 1].set_xlabel('Fold')
     axs[0, 1].legend()
 
-    # 3. 敏感度和特异度
+    # 3. Sensitivity and specificity
     axs[1, 0].bar(folds, metrics['sensitivity'], alpha=0.7, label='Sensitivity')
     axs[1, 0].bar(folds, metrics['specificity'], alpha=0.7, label='Specificity')
     axs[1, 0].set_title('Sensitivity and Specificity')
@@ -243,7 +236,7 @@ def visualize_fold_metrics(metrics, output_path):
     axs[1, 0].set_xlabel('Fold')
     axs[1, 0].legend()
 
-    # 4. 平均指标
+    # 4. Average metrics table
     avg_metrics = {
         'Training loss': np.mean(metrics['train_loss']),
         'Validation loss': np.mean(metrics['val_loss']),
@@ -253,7 +246,6 @@ def visualize_fold_metrics(metrics, output_path):
         'Specificity': np.mean(metrics['specificity'])
     }
 
-    # 创建表格显示平均指标
     cell_text = [
         [f"{avg_metrics['Training loss']:.4f}"],
         [f"{avg_metrics['Validation loss']:.4f}"],
@@ -277,72 +269,60 @@ def visualize_fold_metrics(metrics, output_path):
     axs[1, 1].set_title('Mean metrics')
 
     plt.tight_layout()
-    plt.savefig(output_path,  dpi=300)
+    plt.savefig(output_path, dpi=300)
     plt.close()
 
-
-# 4.在analyze_and_clean_labels函数中添加问题样本可视化
+# 4. Visualize issue samples in the analyze_and_clean_labels function
 def visualize_issue_samples(issue_df, X, output_dir, max_samples=100):
-    """可视化问题样本，展示原始图像、真实标签和预测标签"""
-    # 确保有足够的问题样本
+    """Visualize issue samples, showing original image, true label, and predicted label."""
     if len(issue_df) == 0:
-        print("未发现任何问题样本，跳过可视化")
+        print("No issue samples found, skipping visualization.")
         return
 
-    # 设置显示参数
     n_samples = min(len(issue_df), max_samples)
     n_cols = 6
     n_rows = (n_samples + n_cols - 1) // n_cols
     plt.figure(figsize=(18, 3 * n_rows))
 
-    # 随机选择样本（或按自置信度排序）
     issue_samples = issue_df.sort_values('self_confidence').head(n_samples)
     import librosa.display
     for i, (idx, row) in enumerate(issue_samples.iterrows()):
         plt.subplot(n_rows, n_cols, i + 1)
 
-        # 获取图像数据（65x65灰度图）
-        img = X[row['index']].squeeze()  # 移除通道维度
+        img = X[row['index']].squeeze()  # Remove channel dimension
 
-        # 显示图像
-        # plt.imshow(img, cmap='inferno')  # 使用inferno色图增强对比度
         librosa.display.specshow(img, sr=8192, hop_length=128, x_axis='time', y_axis='mel', cmap='coolwarm')
-        plt.xlim(0, 1.0)  # 设置横轴范围为0-1秒
-        # 设置横轴刻度为指定值，并确保紧贴坐标轴
+        plt.xlim(0, 1.0)
         plt.xticks([0, 0.2, 0.4, 0.6, 0.8, 1.0], fontsize=8)
-        # 调整刻度标签与坐标轴的距离
         ax = plt.gca()
-        ax.tick_params(axis='x', which='major', pad=2)  # 减小x轴刻度标签与坐标轴的距离
-        plt.xlabel('Time (s)', fontsize=9, horizontalalignment="center")  # 设置x轴标签
-        ax.tick_params(axis='y', which='major', pad=2)  # 减小y轴刻度标签与坐标轴的距离
-        plt.ylabel('Frequency (Hz)', fontsize=9, verticalalignment="center", labelpad=10)  # 设置y轴标签
-        plt.xticks(fontsize=8)  # 设置x轴刻度字体大小
-        plt.yticks(rotation=90, fontsize=8)  # 设置y轴刻度字体大小和旋转角度
+        ax.tick_params(axis='x', which='major', pad=2)
+        plt.xlabel('Time (s)', fontsize=9, horizontalalignment="center")
+        ax.tick_params(axis='y', which='major', pad=2)
+        plt.ylabel('Frequency (Hz)', fontsize=9, verticalalignment="center", labelpad=10)
+        plt.xticks(fontsize=8)
+        plt.yticks(rotation=90, fontsize=8)
 
-        # 添加标题信息
+        # Title with corrected spelling "True"
         title = f"ID: {row['index']}\n"
-        title += f"Ture: {row['true_label']} → Prediction: {row['pred_label']}\n"
+        title += f"True: {row['true_label']} → Prediction: {row['pred_label']}\n"
         title += f"Self-confidence: {row['self_confidence']:.2f}"
         plt.title(title, fontsize=11)
 
-        # plt.axis('off')
-
     plt.suptitle(f'Visualization of issue samples: ({len(issue_df)} in total, display the top {n_samples})', fontsize=16)
-    plt.tight_layout(rect=[0, 0, 1, 0.96])  # 为总标题留空间
+    plt.tight_layout(rect=[0, 0, 1, 0.96])
     plt.savefig(os.path.join(output_dir, 'issue_samples_visualization.png'), dpi=300)
     plt.close()
 
-# 5. 置信度分析及标签清洗
+# 5. Confidence analysis and label cleaning
 def analyze_and_clean_labels(X, y, pred_probs, confidence_scores, output_dir="results"):
-    """分析置信度并清洗标签，生成详细报告"""
-    # 创建输出目录
+    """Analyze confidence and clean labels, generate a detailed report."""
     os.makedirs(output_dir, exist_ok=True)
 
-    # 计算额外置信度指标
+    # Additional confidence metrics
     entropy = -np.sum(pred_probs * np.log(pred_probs + 1e-10), axis=1)
-    self_confidence = pred_probs[np.arange(len(y)), y]  # 真实标签的概率
+    self_confidence = pred_probs[np.arange(len(y)), y]  # Probability of true label
 
-    # 查找标签问题
+    # Find label issues
     ranked_label_issues = find_label_issues(
         labels=y,
         pred_probs=pred_probs,
@@ -350,7 +330,7 @@ def analyze_and_clean_labels(X, y, pred_probs, confidence_scores, output_dir="re
         filter_by='confident_learning'
     )
 
-    # 创建包含置信度指标的DataFrame
+    # Create DataFrame with confidence metrics
     results_df = pd.DataFrame({
         'index': np.arange(len(y)),
         'true_label': y,
@@ -362,38 +342,37 @@ def analyze_and_clean_labels(X, y, pred_probs, confidence_scores, output_dir="re
         'is_issue': False
     })
 
-    # 标记问题样本
+    # Mark issue samples
     results_df.loc[ranked_label_issues, 'is_issue'] = True
 
-    # 保存详细结果
+    # Save detailed results
     results_df.to_csv(os.path.join(output_dir, "sample_confidence_details.csv"), index=False)
 
-    # 生成统计报告
+    # Generate statistical report
     report = generate_confidence_report(results_df)
 
-    # 可视化分析
+    # Visualization analysis
     visualize_confidence_analysis(results_df, output_dir)
 
-    # 可视化问题样本
+    # Visualize issue samples
     issue_samples = results_df[results_df['is_issue']]
     visualize_issue_samples(issue_samples, X, output_dir)
 
-    # 创建清洗后的数据集 (移除问题样本)
+    # Create cleaned dataset (remove issue samples)
     clean_mask = ~results_df['is_issue'].values
     X_clean = X[clean_mask]
     y_clean = y[clean_mask]
 
-    print(f"原始数据集大小: {len(y)}")
-    print(f"清洗后数据集大小: {len(y_clean)} ({len(ranked_label_issues)}个样本被移除)")
+    print(f"Original dataset size: {len(y)}")
+    print(f"Cleaned dataset size: {len(y_clean)} ({len(ranked_label_issues)} samples removed)")
 
-    # 保存清洗后的数据集
+    # Save cleaned dataset
     np.savez(os.path.join(output_dir, "cleaned_dataset.npz"), X=X_clean, y=y_clean)
 
     return X_clean, y_clean, results_df, report
 
-
 def generate_confidence_report(df):
-    """生成置信度统计报告"""
+    """Generate confidence statistics report."""
     report = {
         "overall": {
             "total_samples": len(df),
@@ -416,7 +395,7 @@ def generate_confidence_report(df):
         }
     }
 
-    # 按类别统计
+    # Statistics per class
     for label in sorted(df['true_label'].unique()):
         class_df = df[df['true_label'] == label]
         report['by_class'][f"class_{label}"] = {
@@ -430,18 +409,15 @@ def generate_confidence_report(df):
 
     return report
 
-
 def visualize_confidence_analysis(df, output_dir):
-    """生成置信度可视化分析"""
+    """Generate confidence visualization analysis."""
     plt.figure(figsize=(15, 12))
 
-    # 1. 修复的置信度分布直方图 - 使用Matplotlib替代Seaborn
+    # 1. Confidence distribution histogram (using Matplotlib instead of Seaborn)
     plt.subplot(2, 2, 1)
-    # 分别提取正常样本和问题样本
     clean_samples = df[~df['is_issue']]
     issue_samples = df[df['is_issue']]
 
-    # 使用Matplotlib绘制直方图
     plt.hist(clean_samples['confidence'], bins=20, alpha=0.5, label='Normal sample', density=True, color='blue')
     plt.hist(issue_samples['confidence'], bins=20, alpha=0.5, label='Issue sample', density=True, color='red')
     plt.title('Confidence distribution')
@@ -449,18 +425,16 @@ def visualize_confidence_analysis(df, output_dir):
     plt.ylabel('Density')
     plt.legend()
 
-    # 2. 自置信度与问题样本关系 - 同样修复
+    # 2. Self-confidence vs issue samples
     plt.subplot(2, 2, 2)
-    # 使用Matplotlib的boxplot替代Seaborn
     data = [clean_samples['self_confidence'], issue_samples['self_confidence']]
     plt.boxplot(data, labels=['Normal sample', 'Issue sample'])
     plt.title('Self-confidence distribution of issue samples')
     plt.ylabel('Self-confidence score')
 
-    # 3. 混淆矩阵（真实标签 vs 预测标签）
+    # 3. Confusion matrix (true vs predicted)
     plt.subplot(2, 2, 3)
     cm = confusion_matrix(df['true_label'], df['pred_label'])
-    # 使用Matplotlib的imshow替代Seaborn热力图
     plt.imshow(cm, interpolation='nearest', cmap=plt.cm.Blues)
     plt.title('Confusion matrix (True vs Predicted)')
     plt.colorbar()
@@ -472,17 +446,15 @@ def visualize_confidence_analysis(df, output_dir):
     plt.xlabel('Prediction label')
     plt.ylabel('True label')
 
-    # 添加数值标签
     thresh = cm.max() / 2.
     for i, j in np.ndindex(cm.shape):
         plt.text(j, i, format(cm[i, j], 'd'),
                  horizontalalignment="center",
                  color="white" if cm[i, j] > thresh else "black")
 
-    # 4. 问题样本在各类别的分布
+    # 4. Distribution of issue samples per class
     plt.subplot(2, 2, 4)
     if not issue_samples.empty:
-        # 使用Matplotlib的bar替代Seaborn
         class_counts = issue_samples['true_label'].value_counts().sort_index()
         plt.bar(class_counts.index.astype(str), class_counts.values)
         plt.title('Number of issue samples in each category')
@@ -493,9 +465,8 @@ def visualize_confidence_analysis(df, output_dir):
     plt.savefig(os.path.join(output_dir, 'confidence_analysis.png'))
     plt.close()
 
-    # 5. 置信度-熵散点图 - 使用Matplotlib替代Seaborn
+    # 5. Confidence vs Entropy scatter plot
     plt.figure(figsize=(10, 6))
-    # 分别绘制正常样本和问题样本
     plt.scatter(clean_samples['confidence'], clean_samples['entropy'],
                 alpha=0.6, label='Normal sample', color='blue')
     plt.scatter(issue_samples['confidence'], issue_samples['entropy'],
@@ -508,13 +479,12 @@ def visualize_confidence_analysis(df, output_dir):
     plt.savefig(os.path.join(output_dir, 'confidence_vs_entropy.png'), dpi=300)
     plt.close()
 
-
 def evaluate_cleaning_effect(X_train_orig, y_train_orig, X_clean, y_clean,
-                             X_test, y_test,  output_dir, epochs, batch_size):
-    """评估清洗效果"""
+                             X_test, y_test, output_dir, epochs, batch_size):
+    """Evaluate the effect of cleaning."""
     os.makedirs(output_dir, exist_ok=True)
 
-    # 训练原始数据集模型
+    # Train on original dataset
     model_orig = create_cnn_model()
     csv_logger_orig = tf.keras.callbacks.CSVLogger(
         os.path.join(output_dir, 'training_log_original.csv'))
@@ -526,11 +496,10 @@ def evaluate_cleaning_effect(X_train_orig, y_train_orig, X_clean, y_clean,
         callbacks=[csv_logger_orig],
         verbose=2
     )
-    # 保存训练好的模型
     model_orig.save('model_orig.h5')
-    print("=== model_orig 已保存 ===")
+    print("=== model_orig saved ===")
 
-    # 训练清洗后数据集模型
+    # Train on cleaned dataset
     model_clean = create_cnn_model()
     csv_logger_clean = tf.keras.callbacks.CSVLogger(
         os.path.join(output_dir, 'training_log_cleaned.csv'))
@@ -542,15 +511,13 @@ def evaluate_cleaning_effect(X_train_orig, y_train_orig, X_clean, y_clean,
         callbacks=[csv_logger_clean],
         verbose=2
     )
-    # 保存训练好的模型
     model_clean.save('model_clean.h5')
-    print("=== model_clean 已保存 ===")
+    print("=== model_clean saved ===")
 
-    # 评估模型性能
+    # Evaluate models
     y_pred_orig = model_orig.predict(X_test).argmax(axis=1)
     y_pred_clean = model_clean.predict(X_test).argmax(axis=1)
 
-    # 计算敏感度和特异度
     def calculate_sensitivity_specificity(y_true, y_pred):
         cm = confusion_matrix(y_true, y_pred)
         tn, fp, fn, tp = cm.ravel()
@@ -563,10 +530,10 @@ def evaluate_cleaning_effect(X_train_orig, y_train_orig, X_clean, y_clean,
     acc_orig = accuracy_score(y_test, y_pred_orig)
     acc_clean = accuracy_score(y_test, y_pred_clean)
 
-    # 可视化训练过程对比
+    # Visualize training comparison
     plt.figure(figsize=(15, 10))
 
-    # 损失曲线
+    # Loss curves
     plt.subplot(2, 2, 1)
     plt.plot(history_orig.history['loss'], label='Training loss before cleaning')
     plt.plot(history_orig.history['val_loss'], label='Validation loss before cleaning')
@@ -577,7 +544,7 @@ def evaluate_cleaning_effect(X_train_orig, y_train_orig, X_clean, y_clean,
     plt.xlabel('Epoch')
     plt.legend()
 
-    # 准确率曲线
+    # Accuracy curves
     plt.subplot(2, 2, 2)
     plt.plot(history_orig.history['accuracy'], label='Training accuracy before cleaning')
     plt.plot(history_orig.history['val_accuracy'], label='Validation accuracy before cleaning')
@@ -588,7 +555,7 @@ def evaluate_cleaning_effect(X_train_orig, y_train_orig, X_clean, y_clean,
     plt.xlabel('Epoch')
     plt.legend()
 
-    # 敏感度和特异度对比
+    # Sensitivity and specificity comparison
     plt.subplot(2, 2, 3)
     plt.bar(['Before cleaning', 'After cleaning'], [sens_orig, sens_clean], color=['blue', 'green'], alpha=0.7, label='Sensitivity')
     plt.bar(['Before cleaning', 'After cleaning'], [spec_orig, spec_clean], color=['red', 'orange'], alpha=0.7, label='Specificity',
@@ -597,13 +564,12 @@ def evaluate_cleaning_effect(X_train_orig, y_train_orig, X_clean, y_clean,
     plt.ylabel('Score')
     plt.legend()
 
-    # 添加数值标签
     for i, v in enumerate([sens_orig, sens_clean]):
         plt.text(i, v / 2, f"Sensitivity: {v:.3f}", ha='center', color='white')
     for i, v in enumerate([spec_orig, spec_clean]):
         plt.text(i, sens_orig + v / 2 if i == 0 else sens_clean + v / 2, f"Specificity: {v:.3f}", ha='center', color='white')
 
-    # 性能提升对比
+    # Performance improvement
     plt.subplot(2, 2, 4)
     metrics = ['Accuracy', 'Sensitivity', 'Specificity']
     orig_values = [acc_orig, sens_orig, spec_orig]
@@ -620,7 +586,6 @@ def evaluate_cleaning_effect(X_train_orig, y_train_orig, X_clean, y_clean,
     plt.savefig(os.path.join(output_dir, 'cleaning_effect_comparison.png'), dpi=300)
     plt.close()
 
-    # 返回结果
     return {
         'original_accuracy': acc_orig,
         'cleaned_accuracy': acc_clean,
@@ -630,40 +595,40 @@ def evaluate_cleaning_effect(X_train_orig, y_train_orig, X_clean, y_clean,
         'cleaned_specificity': spec_clean
     }
 
-# 7. 主流程增强版
+# 7. Enhanced main workflow
 def main():
-    # 配置参数
+    # Configuration parameters
     DATA_PATH = "D:\博士学习\研究课题\标签清洗\数据\绍兴-东部\\East_Data-1s.csv"
     OUTPUT_DIR = "confidence_analysis_results"
     N_FOLDS = 5
     EPOCHS = 500
     BATCH_SIZE = 32
 
-    print("=== 置信学习标签清洗与置信度分析 ===")
+    print("=== Confidence Learning Label Cleaning and Confidence Analysis ===")
 
-    # 1. 加载数据
-    print("\n[1/4] 加载和预处理数据...")
+    # 1. Load data
+    print("\n[1/4] Loading and preprocessing data...")
     X, y = load_and_preprocess_data(DATA_PATH)
 
-    # 划分训练集和测试集
+    # Split into training and test sets
     X_train_orig, X_test, y_train_orig, y_test = train_test_split(
         X, y, test_size=0.2, random_state=42)
-    print(f"训练集大小: {len(X_train_orig)}, 测试集大小: {len(X_test)}")
+    print(f"Training set size: {len(X_train_orig)}, Test set size: {len(X_test)}")
 
-    # 2. 交叉验证获取预测概率和置信度
-    print("\n[2/4] 执行交叉验证预测并计算置信度...")
+    # 2. Cross-validation to obtain prediction probabilities and confidence scores
+    print("\n[2/4] Performing cross-validation prediction and computing confidence...")
     pred_probs, confidence_scores, models, fold_histories, fold_metrics = cross_validation_predict(
         X, y, n_folds=N_FOLDS, epochs=EPOCHS, batch_size=BATCH_SIZE
     )
 
-    # 3. 置信度分析与标签清洗
-    print("\n[3/4] 分析置信度并清洗标签...")
+    # 3. Confidence analysis and label cleaning
+    print("\n[3/4] Analyzing confidence and cleaning labels...")
     X_clean, y_clean, results_df, report = analyze_and_clean_labels(
         X, y, pred_probs, confidence_scores, output_dir=OUTPUT_DIR
     )
 
-    # 4. 评估清洗效果
-    print("\n[4/4] 评估清洗效果...")
+    # 4. Evaluate cleaning effect
+    print("\n[4/4] Evaluating cleaning effect...")
 
     eval_results = evaluate_cleaning_effect(
         X_train_orig, y_train_orig, X_clean, y_clean,
@@ -673,48 +638,47 @@ def main():
         batch_size=BATCH_SIZE
     )
 
-    # 5. 输出最终报告
-    print("\n=== 置信度分析报告 ===")
-    print(f"总样本数: {report['overall']['total_samples']}")
-    print(f"问题样本数: {report['overall']['issue_samples']} ({report['overall']['issue_percentage']}%)")
-    print(f"平均置信度: {report['overall']['avg_confidence']:.4f}")
-    print(f"平均自置信度: {report['overall']['avg_self_confidence']:.4f}")
-    print(f"平均熵: {report['overall']['avg_entropy']:.4f}")
-    print(f"整体准确率: {report['overall']['accuracy']:.2f}%")
+    # 5. Output final report
+    print("\n=== Confidence Analysis Report ===")
+    print(f"Total samples: {report['overall']['total_samples']}")
+    print(f"Issue samples: {report['overall']['issue_samples']} ({report['overall']['issue_percentage']}%)")
+    print(f"Average confidence: {report['overall']['avg_confidence']:.4f}")
+    print(f"Average self-confidence: {report['overall']['avg_self_confidence']:.4f}")
+    print(f"Average entropy: {report['overall']['avg_entropy']:.4f}")
+    print(f"Overall accuracy: {report['overall']['accuracy']:.2f}%")
 
-    print("\n按类别统计:")
+    print("\nPer-class statistics:")
     for cls, stats in report['by_class'].items():
-        print(f"  {cls}: {stats['count']}样本 | "
-              f"{stats['issue_count']}问题({stats['issue_percentage']}%) | "
-              f"置信度:{stats['avg_confidence']:.4f} | "
-              f"准确率:{stats['accuracy']:.2f}%")
+        print(f"  {cls}: {stats['count']} samples | "
+              f"{stats['issue_count']} issues ({stats['issue_percentage']}%) | "
+              f"confidence:{stats['avg_confidence']:.4f} | "
+              f"accuracy:{stats['accuracy']:.2f}%")
 
-    print("\n问题样本特征:")
-    print(f"  平均置信度: {report['issue_characteristics']['avg_confidence']:.4f}")
-    print(f"  平均自置信度: {report['issue_characteristics']['avg_self_confidence']:.4f}")
-    print(f"  最低自置信度: {report['issue_characteristics']['min_self_confidence']:.4f}")
+    print("\nIssue sample characteristics:")
+    print(f"  Average confidence: {report['issue_characteristics']['avg_confidence']:.4f}")
+    print(f"  Average self-confidence: {report['issue_characteristics']['avg_self_confidence']:.4f}")
+    print(f"  Minimum self-confidence: {report['issue_characteristics']['min_self_confidence']:.4f}")
 
-    print("\n=== 清洗效果评估报告 ===")
-    print(f"原始模型验证准确率: {eval_results['original_accuracy']:.4f}")
-    print(f"清洗后模型验证准确率: {eval_results['cleaned_accuracy']:.4f}")
-    print(f"准确率提升: {eval_results['cleaned_accuracy'] - eval_results['original_accuracy']:.4f}")
-    print(f"原始模型敏感度: {eval_results['original_sensitivity']:.4f}")
-    print(f"清洗后模型敏感度: {eval_results['cleaned_sensitivity']:.4f}")
-    print(f"敏感度提升: {eval_results['cleaned_sensitivity'] - eval_results['original_sensitivity']:.4f}")
-    print(f"原始模型特异度: {eval_results['original_specificity']:.4f}")
-    print(f"清洗后模型特异度: {eval_results['cleaned_specificity']:.4f}")
-    print(f"特异度提升: {eval_results['cleaned_specificity'] - eval_results['original_specificity']:.4f}")
+    print("\n=== Cleaning Effect Evaluation Report ===")
+    print(f"Original model validation accuracy: {eval_results['original_accuracy']:.4f}")
+    print(f"Cleaned model validation accuracy: {eval_results['cleaned_accuracy']:.4f}")
+    print(f"Accuracy improvement: {eval_results['cleaned_accuracy'] - eval_results['original_accuracy']:.4f}")
+    print(f"Original model sensitivity: {eval_results['original_sensitivity']:.4f}")
+    print(f"Cleaned model sensitivity: {eval_results['cleaned_sensitivity']:.4f}")
+    print(f"Sensitivity improvement: {eval_results['cleaned_sensitivity'] - eval_results['original_sensitivity']:.4f}")
+    print(f"Original model specificity: {eval_results['original_specificity']:.4f}")
+    print(f"Cleaned model specificity: {eval_results['cleaned_specificity']:.4f}")
+    print(f"Specificity improvement: {eval_results['cleaned_specificity'] - eval_results['original_specificity']:.4f}")
 
-    # 保存完整报告
+    # Save full report
     with open(os.path.join(OUTPUT_DIR, "confidence_report.json"), 'w') as f:
         json.dump(report, f, indent=2)
 
-    # 保存评估结果
+    # Save evaluation results
     with open(os.path.join(OUTPUT_DIR, "evaluation_results.json"), 'w') as f:
         json.dump(eval_results, f, indent=2)
 
-    print(f"\n分析结果已保存至: {OUTPUT_DIR}")
-
+    print(f"\nAnalysis results saved to: {OUTPUT_DIR}")
 
 if __name__ == "__main__":
     main()
