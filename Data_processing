@@ -1,0 +1,79 @@
+"""
+Audio data reading, processing, and segmentation (requires sampling rate of 8192 Hz, 1 second per sample)
+"""
+import os
+import numpy as np
+import librosa
+import pandas as pd
+import librosa.display
+import matplotlib.pyplot as plt
+import matplotlib
+
+matplotlib.use("Agg")
+plt.rcParams['font.family'] = 'Times New Roman'
+
+# Path to the folder containing audio files
+folder_path = 'D:\博士学习\杂七杂八\wav - 副本\wav - 副本'
+time_frequency = []  # Store time-domain segments for each sample
+
+# Iterate over all audio files in the folder
+for filename in os.listdir(folder_path):
+    if filename.endswith('.wav'):  # Process only WAV files
+        wav_file_path = os.path.join(folder_path, filename)
+        # Load audio with original sampling rate
+        signal, sr = librosa.load(wav_file_path, sr=None)
+
+        # Flatten to 1D array
+        signal = signal.flatten()
+        # Extract a 1‑second segment (8192 samples) starting at sample index 8192
+        # (adjust indices as needed for your data)
+        signal = signal[8192:16384]
+        print(signal.shape, filename)
+
+        time_frequency.append(signal)
+        print("Processed:", wav_file_path)
+
+# Convert to numpy array and reshape to (num_samples, 8192)
+time_frequency = np.array(time_frequency).reshape(-1, 8192)
+print("Time-frequency array shape:", time_frequency.shape)
+
+# Compute Mel spectrograms for each audio segment
+Filter_Bank = []  # Store log-Mel spectrograms for all samples
+
+for i in range(time_frequency.shape[0]):
+    y = time_frequency[i, :]  # Current audio signal
+    print("Signal shape:", y.shape)
+
+    # Compute Mel spectrogram (directly returns Mel‑scaled power spectrogram)
+    S = librosa.feature.melspectrogram(y=y, sr=8192, n_mels=128, n_fft=256, hop_length=128)
+    # Convert to dB-scaled log-Mel spectrogram (avoid log(0) by adding a small epsilon)
+    log_mel_spec = librosa.power_to_db(S, ref=np.max, top_db=None)  # or use np.log(S + 1e-10)
+
+    print("Log-Mel spectrogram shape:", log_mel_spec.shape)
+
+    # Visualize the log-Mel spectrogram
+    plt.figure(figsize=(8, 6))
+    librosa.display.specshow(log_mel_spec, sr=8192, hop_length=128, x_axis='time', y_axis='mel', cmap='coolwarm')
+    plt.colorbar(format='%+2.0f dB')
+    plt.xlabel('Time (s)', fontsize=22)
+    plt.ylabel('Frequency (Hz)', fontsize=22)
+    plt.xticks(fontsize=18)
+    plt.yticks(fontsize=18, rotation=90)
+
+    # Save the spectrogram image
+    save_folder = 'D:\Pythonproject\Lable_clean\\FB-1s'
+    if not os.path.exists(save_folder):
+        os.makedirs(save_folder)
+    plt.savefig(os.path.join(save_folder, f"F{i}.png"))
+    plt.close()  # Close figure to free memory
+
+    Filter_Bank.append(log_mel_spec)
+
+# # (Optional) Build a dataset for classification
+# # Flatten each spectrogram and append a label column (1 for leakage, 0 for no leakage)
+# Filter_Bank_flat = np.array([spec.flatten() for spec in Filter_Bank])
+# label = np.ones((time_frequency.shape[0], 1))   # Leakage class = 1
+# # label = np.zeros((time_frequency.shape[0], 1)) # No-leakage class = 0
+# dataset = np.hstack((Filter_Bank_flat, label))
+# df = pd.DataFrame(dataset)
+# df.to_csv("D:\leak.csv", index=False)
