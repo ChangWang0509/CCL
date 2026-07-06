@@ -10,3 +10,4 @@ matplotlib==3.6.3
 cleanlab==2.7.1
 pillow==10.4.0
 tqdm==4.64.1
+librosa=0.8
