@@ -1,0 +1,291 @@
+import os
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = '2'
+
+import numpy as np
+import pandas as pd
+import tensorflow as tf
+from tensorflow.keras import layers, models
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import confusion_matrix, accuracy_score
+import matplotlib.pyplot as plt
+import json
+
+
+# ----------------------------- Data Loading and Preprocessing -----------------------------
+def load_and_preprocess_data(DATA_PATH):
+    """
+    Load CSV data, extract features and labels, standardize, and reshape to 65x65x1.
+    """
+    data = pd.read_csv(DATA_PATH)
+    X = np.array(data.iloc[:, :-1])
+    y = np.array(data.iloc[:, -1]).astype(np.int32)
+    X = (X - np.mean(X)) / np.std(X)
+    X = X.reshape(data.shape[0], 65, 65, 1)
+    return X, y
+
+# ----------------------------- Model Definition -----------------------------
+def create_cnn_model(input_shape=(65, 65, 1), num_classes=2):
+    """
+    Create a CNN model suitable for 65x65 grayscale images.
+    """
+    model = models.Sequential([
+        layers.Conv2D(16, (3, 3), activation='relu', strides=(2, 2), input_shape=input_shape),
+        layers.BatchNormalization(),
+        layers.Dropout(0.2),
+        layers.Conv2D(32, (3, 3), activation='relu', strides=(2, 2)),
+        layers.BatchNormalization(),
+        layers.Dropout(0.2),
+        layers.Conv2D(64, (3, 3), activation='relu', strides=(2, 2)),
+        layers.BatchNormalization(),
+        layers.GlobalAveragePooling2D(),
+        layers.Dropout(0.5),
+        layers.Dense(64, activation='relu'),
+        layers.Dense(num_classes, activation='softmax')
+    ])
+    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.0001),
+                  loss='sparse_categorical_crossentropy',
+                  metrics=['accuracy'])
+    return model
+
+# ----------------------------- Evaluation Utilities -----------------------------
+def evaluate_model(model, X_test, y_test):
+    """
+    Evaluate model on test set and return accuracy, sensitivity, and specificity.
+    """
+    y_pred = model.predict(X_test, verbose=0).argmax(axis=1)
+    acc = accuracy_score(y_test, y_pred)
+    cm = confusion_matrix(y_test, y_pred)
+    tn, fp, fn, tp = cm.ravel()
+    sensitivity = tp / (tp + fn) if (tp + fn) > 0 else 0
+    specificity = tn / (tn + fp) if (tn + fp) > 0 else 0
+    return acc, sensitivity, specificity
+
+# ----------------------------- Method 1: Co-teaching (2018) -----------------------------
+def train_with_co_teaching(X, y, X_test, y_test,
+                           epochs=500, batch_size=32,
+                           final_keep_rate=0.5):   # Controls the pruning strength
+    """
+    Co-teaching algorithm: two networks co-train by selecting small-loss samples from each other.
+    """
+    num_classes = len(np.unique(y))
+    model1 = create_cnn_model(num_classes=num_classes)
+    model2 = create_cnn_model(num_classes=num_classes)
+    optimizer = tf.keras.optimizers.Adam(learning_rate=0.0001)
+    model1.compile(optimizer=optimizer, loss='sparse_categorical_crossentropy')
+    model2.compile(optimizer=optimizer, loss='sparse_categorical_crossentropy')
+
+    dataset = tf.data.Dataset.from_tensor_slices((X, y)).shuffle(1024).batch(batch_size)
+    total_batches = len(X) // batch_size
+
+    for epoch in range(epochs):
+        keep_rate = 1.0 - (epoch / epochs) * (1.0 - final_keep_rate)
+        keep_rate = max(keep_rate, final_keep_rate)
+        num_keep = int(batch_size * keep_rate)
+
+        epoch_loss1 = []
+        epoch_loss2 = []
+
+        for step, (x_batch, y_batch) in enumerate(dataset):
+            if len(x_batch) < batch_size:
+                continue
+
+            with tf.GradientTape(persistent=True) as tape:
+                logits1 = model1(x_batch, training=True)
+                logits2 = model2(x_batch, training=True)
+                loss1 = tf.keras.losses.sparse_categorical_crossentropy(y_batch, logits1)
+                loss2 = tf.keras.losses.sparse_categorical_crossentropy(y_batch, logits2)
+
+            _, indices1 = tf.nn.top_k(-loss1, k=num_keep)
+            _, indices2 = tf.nn.top_k(-loss2, k=num_keep)
+
+            # Update model1 using samples selected by model2
+            x_keep2 = tf.gather(x_batch, indices2)
+            y_keep2 = tf.gather(y_batch, indices2)
+            with tf.GradientTape() as tape1:
+                logits1_keep = model1(x_keep2, training=True)
+                loss1_keep = tf.reduce_mean(tf.keras.losses.sparse_categorical_crossentropy(y_keep2, logits1_keep))
+            grads1 = tape1.gradient(loss1_keep, model1.trainable_variables)
+            optimizer.apply_gradients(zip(grads1, model1.trainable_variables))
+
+            # Update model2 using samples selected by model1
+            x_keep1 = tf.gather(x_batch, indices1)
+            y_keep1 = tf.gather(y_batch, indices1)
+            with tf.GradientTape() as tape2:
+                logits2_keep = model2(x_keep1, training=True)
+                loss2_keep = tf.reduce_mean(tf.keras.losses.sparse_categorical_crossentropy(y_keep1, logits2_keep))
+            grads2 = tape2.gradient(loss2_keep, model2.trainable_variables)
+            optimizer.apply_gradients(zip(grads2, model2.trainable_variables))
+
+            epoch_loss1.append(loss1_keep.numpy())
+            epoch_loss2.append(loss2_keep.numpy())
+
+        if (epoch + 1) % 50 == 0:
+            print(f"Co-teaching Epoch {epoch+1}/{epochs}, Loss1: {np.mean(epoch_loss1):.4f}, Loss2: {np.mean(epoch_loss2):.4f}")
+
+    # Use average prediction for testing
+    pred1 = model1.predict(X_test, verbose=0)
+    pred2 = model2.predict(X_test, verbose=0)
+    y_pred = np.argmax((pred1 + pred2) / 2, axis=1)
+    acc = accuracy_score(y_test, y_pred)
+    cm = confusion_matrix(y_test, y_pred)
+    tn, fp, fn, tp = cm.ravel()
+    sensitivity = tp / (tp + fn) if (tp + fn) > 0 else 0
+    specificity = tn / (tn + fp) if (tn + fp) > 0 else 0
+    return acc, sensitivity, specificity
+
+# ----------------------------- Method 2: Decoupling (2020) -----------------------------
+def train_with_decoupling(X, y, X_test, y_test,
+                          epochs=500, batch_size=32):
+    """
+    Decoupling algorithm: two networks are updated only on samples where they disagree.
+    """
+    num_classes = len(np.unique(y))
+    model1 = create_cnn_model(num_classes=num_classes)
+    model2 = create_cnn_model(num_classes=num_classes)
+    optimizer = tf.keras.optimizers.Adam(learning_rate=0.0001)
+    model1.compile(optimizer=optimizer, loss='sparse_categorical_crossentropy')
+    model2.compile(optimizer=optimizer, loss='sparse_categorical_crossentropy')
+
+    dataset = tf.data.Dataset.from_tensor_slices((X, y)).shuffle(1024).batch(batch_size)
+
+    for epoch in range(epochs):
+        epoch_loss1 = []
+        epoch_loss2 = []
+        for step, (x_batch, y_batch) in enumerate(dataset):
+            if len(x_batch) < batch_size:
+                continue
+
+            logits1 = model1(x_batch, training=True)
+            logits2 = model2(x_batch, training=True)
+            pred1 = tf.argmax(logits1, axis=1)
+            pred2 = tf.argmax(logits2, axis=1)
+
+            disagree_mask = tf.not_equal(pred1, pred2)
+            if tf.reduce_sum(tf.cast(disagree_mask, tf.int32)) == 0:
+                continue
+
+            x_dis = tf.boolean_mask(x_batch, disagree_mask)
+            y_dis = tf.boolean_mask(y_batch, disagree_mask)
+
+            with tf.GradientTape(persistent=True) as tape:
+                logits1_dis = model1(x_dis, training=True)
+                logits2_dis = model2(x_dis, training=True)
+                loss1 = tf.reduce_mean(tf.keras.losses.sparse_categorical_crossentropy(y_dis, logits1_dis))
+                loss2 = tf.reduce_mean(tf.keras.losses.sparse_categorical_crossentropy(y_dis, logits2_dis))
+
+            grads1 = tape.gradient(loss1, model1.trainable_variables)
+            grads2 = tape.gradient(loss2, model2.trainable_variables)
+            optimizer.apply_gradients(zip(grads1, model1.trainable_variables))
+            optimizer.apply_gradients(zip(grads2, model2.trainable_variables))
+            epoch_loss1.append(loss1.numpy())
+            epoch_loss2.append(loss2.numpy())
+
+        if (epoch + 1) % 50 == 0:
+            print(f"Decoupling Epoch {epoch+1}/{epochs}, Loss1: {np.mean(epoch_loss1):.4f}, Loss2: {np.mean(epoch_loss2):.4f}")
+
+    pred1 = model1.predict(X_test, verbose=0)
+    pred2 = model2.predict(X_test, verbose=0)
+    y_pred = np.argmax((pred1 + pred2) / 2, axis=1)
+    acc = accuracy_score(y_test, y_pred)
+    cm = confusion_matrix(y_test, y_pred)
+    tn, fp, fn, tp = cm.ravel()
+    sensitivity = tp / (tp + fn) if (tp + fn) > 0 else 0
+    specificity = tn / (tn + fp) if (tn + fp) > 0 else 0
+    return acc, sensitivity, specificity
+
+# ----------------------------- Method 3: Self-training (Pseudo-label) -----------------------------
+def train_with_self_training(X, y, X_test, y_test,
+                             epochs=500, batch_size=32,
+                             confidence_threshold=0.9):   # Controls the pruning strength
+    """
+    Self-training: first train on original labels, then generate pseudo-labels for high-confidence samples,
+    and retrain on the new set.
+    """
+    num_classes = len(np.unique(y))
+    model = create_cnn_model(num_classes=num_classes)
+
+    # Phase 1: train with original labels for half epochs
+    first_epochs = epochs // 2
+    print(f"Self-training: Phase 1 training {first_epochs} epochs...")
+    model.fit(X, y,
+              epochs=first_epochs,
+              batch_size=batch_size,
+              validation_split=0.1,
+              verbose=0)
+
+    # Generate pseudo-labels
+    pred_probs = model.predict(X, verbose=0)
+    max_probs = np.max(pred_probs, axis=1)
+    pseudo_labels = np.argmax(pred_probs, axis=1)
+
+    # Keep high-confidence samples, discard low-confidence ones
+    high_conf_mask = max_probs >= confidence_threshold
+    X_new = X[high_conf_mask]
+    y_new = pseudo_labels[high_conf_mask]
+
+    print(f"Self-training: Kept {len(y_new)} samples (threshold={confidence_threshold}), discarded {len(y) - len(y_new)}")
+
+    # Phase 2: retrain the model (re-initialized) with pseudo-labels
+    model2 = create_cnn_model(num_classes=num_classes)
+    print(f"Self-training: Phase 2 training {epochs - first_epochs} epochs with pseudo-labels...")
+    model2.fit(X_new, y_new,
+               epochs=epochs - first_epochs,
+               batch_size=batch_size,
+               validation_split=0.1,
+               verbose=0)
+
+    acc, sensitivity, specificity = evaluate_model(model2, X_test, y_test)
+    return acc, sensitivity, specificity
+
+
+# ----------------------------- Main Program -----------------------------
+def main():
+    DATA_PATH = "D:\\博士学习\\研究课题\\标签清洗\\数据\\绍兴-东部\\East_Data-5s.csv"
+    EPOCHS = 500
+    BATCH_SIZE = 32
+
+    print("Loading data...")
+    X, y = load_and_preprocess_data(DATA_PATH)
+
+    # Split test set
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    print(f"Total samples: {len(X)}, Test size: {len(X_test)}")
+
+    results = {}
+
+    # 1. Co-teaching
+    print("\n=== Running Co-teaching on full data (final_keep_rate=0.95) ===")
+    acc, sens, spec = train_with_co_teaching(X, y, X_test, y_test,
+                                             epochs=EPOCHS, batch_size=BATCH_SIZE,
+                                             final_keep_rate=0.95)
+    results['Co-teaching'] = {'Accuracy': acc, 'Sensitivity': sens, 'Specificity': spec}
+    print(f"Co-teaching -> Acc: {acc:.4f}, Sens: {sens:.4f}, Spec: {spec:.4f}")
+
+    # 2. Decoupling
+    print("\n=== Running Decoupling on full data ===")
+    acc, sens, spec = train_with_decoupling(X, y, X_test, y_test,
+                                            epochs=EPOCHS, batch_size=BATCH_SIZE)
+    results['Decoupling'] = {'Accuracy': acc, 'Sensitivity': sens, 'Specificity': spec}
+    print(f"Decoupling -> Acc: {acc:.4f}, Sens: {sens:.4f}, Spec: {spec:.4f}")
+
+    # 3. Self-training
+    print("\n=== Running Self-training on full data (threshold=0.80) ===")
+    acc, sens, spec = train_with_self_training(X, y, X_test, y_test,
+                                               epochs=EPOCHS, batch_size=BATCH_SIZE,
+                                               confidence_threshold=0.80)
+    results['Self-training'] = {'Accuracy': acc, 'Sensitivity': sens, 'Specificity': spec}
+    print(f"Self-training -> Acc: {acc:.4f}, Sens: {sens:.4f}, Spec: {spec:.4f}")
+
+    # Print comparison table
+    print("\n========== Performance Comparison  ==========")
+    print(f"{'Method':<15} {'Accuracy':<10} {'Sensitivity':<12} {'Specificity':<12}")
+    for method, metrics in results.items():
+        print(f"{method:<15} {metrics['Accuracy']:.4f}     {metrics['Sensitivity']:.4f}       {metrics['Specificity']:.4f}")
+
+    # Save results
+    with open('comparison_results_leaked.json', 'w') as f:
+        json.dump(results, f, indent=2)
+
+if __name__ == "__main__":
+    main()
